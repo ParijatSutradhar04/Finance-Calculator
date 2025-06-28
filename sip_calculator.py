@@ -77,3 +77,17 @@ elif option == 'SIP and Lumpsum with EMI':
         total = total_sip + total_emi
         st.write(f"Total invested amount: {total_invested:,.2f}")
         st.write(f"The total amount after {time} years is: {total:,.2f}")
+
+elif option == 'SIP and Lumpsum':
+    deposit = st.number_input("Monthly Deposit Amount", min_value=0)
+    rate = st.number_input("Annual Interest Rate (%)", min_value=0.0)
+    time = st.number_input("Time Period (years)", min_value=0)
+    step_up = st.number_input("Annual Step-Up Percentage (%)", min_value=0.0)
+    principal = st.number_input("Lumpsum Amount", min_value=0)
+    if st.button("Calculate SIP and Lumpsum"):
+        total_sip, invested_sip = sip(deposit, rate, time, step_up)
+        total_lumpsum, invested_lumpsum = lumpsum(principal, rate, time)
+        total_invested = invested_sip + invested_lumpsum
+        total = total_sip + total_lumpsum
+        st.write(f"Total invested amount: {total_invested:,.2f}")
+        st.write(f"The total amount after {time} years is: {total:,.2f}")
