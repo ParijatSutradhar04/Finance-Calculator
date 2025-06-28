@@ -31,7 +31,7 @@ def lumpsum_with_emi(principal, rate, emi_rate, time):
 st.title("Investment Calculator")
 option = st.selectbox(
     'Choose an investment option:',
-    ['SIP', 'Lumpsum', 'Lumpsum with EMI', 'SIP and Lumpsum with EMI']
+    ['SIP', 'Lumpsum', 'Lumpsum with EMI', 'SIP and Lumpsum with EMI', 'SIP and Lumpsum']
 )
 
 if option == 'SIP':
