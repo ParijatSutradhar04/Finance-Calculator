@@ -200,11 +200,329 @@ def calculate_combined_investment(
     df = pd.DataFrame(data)
     return current_amount, total_invested, total_withdrawn, df
 
+def calculate_multiple_sips(sips_list: list, years: int, initial_amount: float = 0.0) -> Tuple[float, float, pd.DataFrame]:
+    """
+    Calculate multiple SIP investments running in parallel.
+    
+    Args:
+        sips_list: List of dictionaries with SIP parameters
+                  [{'amount': 5000, 'rate': 12, 'step_up': 10}, ...]
+        years: Investment duration in years
+        initial_amount: Initial amount (from previous phase)
+    
+    Returns:
+        Tuple of (total_final_amount, total_invested, combined_year_wise_data)
+    """
+    if not sips_list:
+        return initial_amount, initial_amount, pd.DataFrame()
+    
+    total_final_amount = initial_amount
+    total_invested = initial_amount
+    combined_data = []
+    
+    # Calculate each SIP separately
+    for i, sip in enumerate(sips_list):
+        final_amount, invested, df = calculate_sip(
+            sip['amount'], sip['rate'], years, sip.get('step_up', 0), 0
+        )
+        total_final_amount += final_amount
+        total_invested += invested
+        
+        # Add SIP identifier to the data
+        df[f'SIP_{i+1}_Value'] = df['Current_Value']
+        df[f'SIP_{i+1}_Invested'] = df['Amount_Invested']
+        
+        if i == 0:
+            combined_data = df[['Year']].copy()
+        
+        combined_data[f'SIP_{i+1}_Value'] = df['Current_Value']
+        combined_data[f'SIP_{i+1}_Invested'] = df['Amount_Invested']
+    
+    # Calculate totals for each year
+    sip_value_cols = [col for col in combined_data.columns if 'Value' in col]
+    sip_invested_cols = [col for col in combined_data.columns if 'Invested' in col]
+    
+    combined_data['Total_SIP_Value'] = combined_data[sip_value_cols].sum(axis=1)
+    combined_data['Total_SIP_Invested'] = combined_data[sip_invested_cols].sum(axis=1)
+    
+    return total_final_amount, total_invested, combined_data
+
+def calculate_multiple_lumpsums(lumpsums_list: list, years: int, initial_amount: float = 0.0) -> Tuple[float, float, pd.DataFrame]:
+    """
+    Calculate multiple Lumpsum investments running in parallel.
+    
+    Args:
+        lumpsums_list: List of dictionaries with Lumpsum parameters
+                      [{'amount': 100000, 'rate': 12}, ...]
+        years: Investment duration in years
+        initial_amount: Initial amount (from previous phase)
+    
+    Returns:
+        Tuple of (total_final_amount, total_invested, combined_year_wise_data)
+    """
+    if not lumpsums_list:
+        return initial_amount, initial_amount, pd.DataFrame()
+    
+    total_final_amount = initial_amount
+    total_invested = initial_amount
+    combined_data = []
+    
+    # Calculate each Lumpsum separately
+    for i, lumpsum in enumerate(lumpsums_list):
+        final_amount, invested, df = calculate_lumpsum(
+            lumpsum['amount'], lumpsum['rate'], years, 0
+        )
+        total_final_amount += final_amount
+        total_invested += invested
+        
+        # Add Lumpsum identifier to the data
+        df[f'Lumpsum_{i+1}_Value'] = df['Current_Value']
+        df[f'Lumpsum_{i+1}_Invested'] = df['Amount_Invested']
+        
+        if i == 0:
+            combined_data = df[['Year']].copy()
+        
+        combined_data[f'Lumpsum_{i+1}_Value'] = df['Current_Value']
+        combined_data[f'Lumpsum_{i+1}_Invested'] = df['Amount_Invested']
+    
+    # Calculate totals for each year
+    lumpsum_value_cols = [col for col in combined_data.columns if 'Value' in col]
+    lumpsum_invested_cols = [col for col in combined_data.columns if 'Invested' in col]
+    
+    combined_data['Total_Lumpsum_Value'] = combined_data[lumpsum_value_cols].sum(axis=1)
+    combined_data['Total_Lumpsum_Invested'] = combined_data[lumpsum_invested_cols].sum(axis=1)
+    
+    return total_final_amount, total_invested, combined_data
+
+def calculate_multiple_swps(swps_list: list, portfolio_values: list, years: int) -> Tuple[float, float, pd.DataFrame]:
+    """
+    Calculate multiple SWP withdrawals from portfolio values.
+    
+    Args:
+        swps_list: List of dictionaries with SWP parameters
+                  [{'amount': 10000, 'rate': 8, 'start_year': 1}, ...]
+        portfolio_values: List of portfolio values for each year
+        years: Total duration in years
+    
+    Returns:
+        Tuple of (remaining_amount, total_withdrawn, combined_year_wise_data)
+    """
+    if not swps_list or not portfolio_values:
+        return 0, 0, pd.DataFrame()
+    
+    # Start with the final portfolio value
+    current_amount = portfolio_values[-1] if portfolio_values else 0
+    total_withdrawn = 0
+    combined_data = []
+    
+    # For simplicity, apply SWPs to the total portfolio value
+    # In reality, you might want more sophisticated allocation
+    for i, swp in enumerate(swps_list):
+        remaining_amount, withdrawn, df = calculate_swp(
+            current_amount, swp['amount'], swp['rate'], years
+        )
+        total_withdrawn += withdrawn
+        current_amount = remaining_amount
+        
+        if i == 0:
+            combined_data = df.copy()
+            combined_data[f'SWP_{i+1}_Withdrawn'] = df['Total_Withdrawn']
+            combined_data[f'SWP_{i+1}_Remaining'] = df['Remaining_Value']
+        else:
+            combined_data[f'SWP_{i+1}_Withdrawn'] = df['Total_Withdrawn']
+            combined_data[f'SWP_{i+1}_Remaining'] = df['Remaining_Value']
+    
+    return current_amount, total_withdrawn, combined_data
+
+def apply_inflation_adjustment(nominal_values: list, inflation_rate: float, start_year: int = 0) -> list:
+    """
+    Apply inflation adjustment to nominal values.
+    
+    Args:
+        nominal_values: List of nominal values
+        inflation_rate: Annual inflation rate (%)
+        start_year: Starting year (default: 0)
+    
+    Returns:
+        List of real (inflation-adjusted) values
+    """
+    if inflation_rate <= 0:
+        return nominal_values
+    
+    real_values = []
+    for i, nominal_value in enumerate(nominal_values):
+        years = start_year + i + 1
+        real_value = nominal_value / ((1 + inflation_rate / 100) ** years)
+        real_values.append(real_value)
+    
+    return real_values
+
+def calculate_combined_portfolio_parallel(
+    sips_list: list = None,
+    lumpsums_list: list = None, 
+    swps_list: list = None,
+    years: int = 10,
+    initial_amount: float = 0.0,
+    inflation_rate: float = 0.0
+) -> Tuple[float, float, float, float, float, pd.DataFrame]:
+    """
+    Calculate combined portfolio with multiple parallel investments and inflation adjustment.
+    
+    Args:
+        sips_list: List of SIP configurations
+        lumpsums_list: List of Lumpsum configurations
+        swps_list: List of SWP configurations
+        years: Investment duration
+        initial_amount: Initial rollover amount
+        inflation_rate: Annual inflation rate (%)
+    
+    Returns:
+        Tuple of (nominal_final, real_final, total_invested, total_withdrawn, net_benefit, portfolio_df)
+    """
+    sips_list = sips_list or []
+    lumpsums_list = lumpsums_list or []
+    swps_list = swps_list or []
+    
+    # Calculate SIPs
+    sip_final, sip_invested, sip_df = calculate_multiple_sips(sips_list, years, 0)
+    
+    # Calculate Lumpsums (including initial amount)
+    lumpsum_final, lumpsum_invested, lumpsum_df = calculate_multiple_lumpsums(lumpsums_list, years, initial_amount)
+    
+    # Combine SIP and Lumpsum results
+    total_invested = sip_invested + lumpsum_invested
+    portfolio_value_nominal = sip_final + lumpsum_final
+    
+    # Apply SWPs (simplified - apply to total portfolio)
+    if swps_list:
+        portfolio_values = [portfolio_value_nominal]  # Simplified for now
+        remaining_after_swp, total_withdrawn, swp_df = calculate_multiple_swps(swps_list, portfolio_values, years)
+        portfolio_value_nominal = remaining_after_swp
+    else:
+        total_withdrawn = 0
+        swp_df = pd.DataFrame()
+    
+    # Create combined portfolio DataFrame
+    portfolio_data = []
+    for year in range(1, years + 1):
+        year_data = {'Year': year}
+        
+        # Get SIP data for this year
+        if not sip_df.empty:
+            year_sip_data = sip_df[sip_df['Year'] == year]
+            if not year_sip_data.empty:
+                year_data['Total_SIP_Invested'] = year_sip_data['Total_SIP_Invested'].iloc[0]
+                year_data['Total_SIP_Value'] = year_sip_data['Total_SIP_Value'].iloc[0]
+            else:
+                year_data['Total_SIP_Invested'] = 0
+                year_data['Total_SIP_Value'] = 0
+        else:
+            year_data['Total_SIP_Invested'] = 0
+            year_data['Total_SIP_Value'] = 0
+        
+        # Get Lumpsum data for this year
+        if not lumpsum_df.empty:
+            year_lumpsum_data = lumpsum_df[lumpsum_df['Year'] == year]
+            if not year_lumpsum_data.empty:
+                year_data['Total_Lumpsum_Invested'] = year_lumpsum_data['Total_Lumpsum_Invested'].iloc[0]
+                year_data['Total_Lumpsum_Value'] = year_lumpsum_data['Total_Lumpsum_Value'].iloc[0]
+            else:
+                year_data['Total_Lumpsum_Invested'] = total_invested
+                year_data['Total_Lumpsum_Value'] = initial_amount * ((1 + 8/100) ** year)  # Default growth
+        else:
+            year_data['Total_Lumpsum_Invested'] = total_invested
+            year_data['Total_Lumpsum_Value'] = initial_amount * ((1 + 8/100) ** year) if initial_amount > 0 else 0
+        
+        # Calculate portfolio totals
+        nominal_portfolio_value = year_data['Total_SIP_Value'] + year_data['Total_Lumpsum_Value']
+        
+        # Get SWP data for this year
+        if not swp_df.empty:
+            year_swp_data = swp_df[swp_df['Year'] == year]
+            if not year_swp_data.empty:
+                year_data['Total_Withdrawn'] = year_swp_data['Total_Withdrawn'].iloc[0]
+                nominal_portfolio_value = year_swp_data['Remaining_Value'].iloc[0]
+            else:
+                year_data['Total_Withdrawn'] = 0
+        else:
+            year_data['Total_Withdrawn'] = 0
+        
+        year_data['Nominal_Portfolio_Value'] = nominal_portfolio_value
+        
+        portfolio_data.append(year_data)
+    
+    portfolio_df = pd.DataFrame(portfolio_data)
+    
+    # Apply inflation adjustment
+    if inflation_rate > 0 and not portfolio_df.empty:
+        nominal_values = portfolio_df['Nominal_Portfolio_Value'].tolist()
+        real_values = apply_inflation_adjustment(nominal_values, inflation_rate)
+        portfolio_df['Real_Portfolio_Value'] = real_values
+        portfolio_value_real = real_values[-1] if real_values else 0
+    else:
+        portfolio_df['Real_Portfolio_Value'] = portfolio_df['Nominal_Portfolio_Value']
+        portfolio_value_real = portfolio_value_nominal
+    
+    # Calculate net benefit
+    net_benefit = portfolio_value_nominal + total_withdrawn - total_invested
+    
+    return portfolio_value_nominal, portfolio_value_real, total_invested, total_withdrawn, net_benefit, portfolio_df
+
 def create_growth_chart(df: pd.DataFrame, chart_type: str) -> go.Figure:
     """Create interactive growth chart using Plotly."""
     fig = go.Figure()
     
-    if chart_type == "Combined":
+    if chart_type == "Portfolio":
+        # Portfolio chart with nominal vs real values
+        if 'Total_SIP_Invested' in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df['Year'], 
+                y=df['Total_SIP_Invested'],
+                mode='lines+markers',
+                name='SIP Invested',
+                line=dict(color='lightblue', width=2),
+                fill=None
+            ))
+        
+        if 'Total_Lumpsum_Invested' in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df['Year'], 
+                y=df['Total_Lumpsum_Invested'],
+                mode='lines+markers',
+                name='Lumpsum Invested',
+                line=dict(color='lightgreen', width=2),
+                fill=None
+            ))
+        
+        fig.add_trace(go.Scatter(
+            x=df['Year'], 
+            y=df['Nominal_Portfolio_Value'],
+            mode='lines+markers',
+            name='Nominal Portfolio Value',
+            line=dict(color='blue', width=3)
+        ))
+        
+        if 'Real_Portfolio_Value' in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df['Year'], 
+                y=df['Real_Portfolio_Value'],
+                mode='lines+markers',
+                name='Real Portfolio Value (Inflation Adjusted)',
+                line=dict(color='red', width=3, dash='dash')
+            ))
+        
+        if 'Total_Withdrawn' in df.columns and df['Total_Withdrawn'].sum() > 0:
+            fig.add_trace(go.Scatter(
+                x=df['Year'], 
+                y=df['Total_Withdrawn'],
+                mode='lines+markers',
+                name='Total Withdrawn',
+                line=dict(color='orange', width=3)
+            ))
+        
+        fig.update_layout(title="Portfolio Growth: Nominal vs Real Values")
+        
+    elif chart_type == "Combined":
         # Combined investment chart
         fig.add_trace(go.Scatter(
             x=df['Year'], 
@@ -266,15 +584,79 @@ def create_growth_chart(df: pd.DataFrame, chart_type: str) -> go.Figure:
         xaxis_title="Years",
         yaxis_title="Amount (₹)",
         hovermode='x unified',
-        template='plotly_white'
+        template='plotly_white',
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
     )
     
     return fig
 
-def display_results(final_amount: float, total_invested: float, df: pd.DataFrame, chart_type: str, total_withdrawn: float = 0.0):
+def display_results(final_amount: float, total_invested: float, df: pd.DataFrame, chart_type: str, total_withdrawn: float = 0.0, real_final_amount: float = None, inflation_rate: float = 0.0):
     """Display calculation results with metrics, table, and chart."""
     
-    if chart_type == "Combined":
+    if chart_type == "Portfolio":
+        # Portfolio-level metrics with inflation adjustment
+        st.subheader("📊 Portfolio Summary")
+        
+        col1, col2, col3, col4, col5 = st.columns(5)
+        
+        with col1:
+            st.metric("Total Invested", f"₹{total_invested:,.2f}")
+        with col2:
+            st.metric("Nominal Final Value", f"₹{final_amount:,.2f}")
+        with col3:
+            if real_final_amount is not None and inflation_rate > 0:
+                st.metric("Real Final Value", f"₹{real_final_amount:,.2f}", 
+                         delta=f"-₹{final_amount - real_final_amount:,.2f}")
+            else:
+                st.metric("Real Final Value", f"₹{final_amount:,.2f}")
+        with col4:
+            if total_withdrawn > 0:
+                st.metric("Total Withdrawn", f"₹{total_withdrawn:,.2f}")
+            else:
+                st.metric("Nominal Returns", f"₹{final_amount - total_invested:,.2f}")
+        with col5:
+            net_benefit = final_amount + total_withdrawn - total_invested
+            st.metric("Net Benefit", f"₹{net_benefit:,.2f}")
+        
+        # Additional portfolio breakdown if inflation is applied
+        if inflation_rate > 0:
+            st.info(f"💡 **Inflation Impact**: At {inflation_rate}% annual inflation, your purchasing power is reduced. "
+                   f"The real value represents what your money can actually buy in today's terms.")
+        
+        # Investment type breakdown
+        if not df.empty:
+            st.subheader("💼 Investment Breakdown")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if 'Total_SIP_Invested' in df.columns:
+                    sip_invested = df['Total_SIP_Invested'].iloc[-1] if not df.empty else 0
+                    sip_value = df['Total_SIP_Value'].iloc[-1] if 'Total_SIP_Value' in df.columns else 0
+                    st.metric("SIP Investment", f"₹{sip_invested:,.2f}")
+                    if sip_value > 0:
+                        st.metric("SIP Current Value", f"₹{sip_value:,.2f}")
+            
+            with col2:
+                if 'Total_Lumpsum_Invested' in df.columns:
+                    lumpsum_invested = df['Total_Lumpsum_Invested'].iloc[-1] if not df.empty else 0
+                    lumpsum_value = df['Total_Lumpsum_Value'].iloc[-1] if 'Total_Lumpsum_Value' in df.columns else 0
+                    st.metric("Lumpsum Investment", f"₹{lumpsum_invested:,.2f}")
+                    if lumpsum_value > 0:
+                        st.metric("Lumpsum Current Value", f"₹{lumpsum_value:,.2f}")
+            
+            with col3:
+                if total_withdrawn > 0:
+                    st.metric("Total Withdrawals", f"₹{total_withdrawn:,.2f}")
+                    avg_withdrawal = total_withdrawn / len(df) / 12 if len(df) > 0 else 0
+                    st.metric("Avg Monthly Withdrawal", f"₹{avg_withdrawal:,.2f}")
+    
+    elif chart_type == "Combined":
         # Combined investment metrics
         col1, col2, col3, col4 = st.columns(4)
         
@@ -321,15 +703,266 @@ def display_results(final_amount: float, total_invested: float, df: pd.DataFrame
             st.metric("Total Returns", f"₹{returns:,.2f}")
     
     # Display year-wise breakdown
-    st.subheader("Year-wise Breakdown")
+    st.subheader("📅 Year-wise Breakdown")
     st.dataframe(df, width='stretch')
     
     # Display chart
-    st.subheader("Growth Visualization")
+    st.subheader("📈 Growth Visualization")
     fig = create_growth_chart(df, chart_type)
     st.plotly_chart(fig, width='stretch')
     
-def combined_investment_section(phase_num: int = 1, initial_amount: float = 0.0):
+def portfolio_investment_section(phase_num: int = 1, initial_amount: float = 0.0):
+    """Portfolio investment section UI with multiple parallel investments."""
+    st.subheader(f"🎯 Portfolio Calculator - Phase {phase_num}")
+    
+    if initial_amount > 0:
+        st.info(f"Starting with rollover amount: ₹{initial_amount:,.2f}")
+    
+    # Initialize session state for multiple investments
+    if f'sips_{phase_num}' not in st.session_state:
+        st.session_state[f'sips_{phase_num}'] = []
+    if f'lumpsums_{phase_num}' not in st.session_state:
+        st.session_state[f'lumpsums_{phase_num}'] = []
+    if f'swps_{phase_num}' not in st.session_state:
+        st.session_state[f'swps_{phase_num}'] = []
+    
+    # Common parameters
+    st.markdown("### 📊 Common Parameters")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        years = st.number_input(
+            "Investment Duration (Years)", 
+            min_value=1, 
+            value=10,
+            key=f"portfolio_years_{phase_num}"
+        )
+    
+    with col2:
+        inflation_rate = st.number_input(
+            "Annual Inflation Rate (%)", 
+            min_value=0.0, 
+            value=6.0,
+            key=f"inflation_rate_{phase_num}",
+            help="Used to calculate real (inflation-adjusted) values"
+        )
+    
+    with col3:
+        st.markdown("**Portfolio Actions**")
+        if st.button("🔄 Clear All Investments", key=f"clear_all_{phase_num}"):
+            st.session_state[f'sips_{phase_num}'] = []
+            st.session_state[f'lumpsums_{phase_num}'] = []
+            st.session_state[f'swps_{phase_num}'] = []
+            st.success("All investments cleared!")
+    
+    # SIP Section
+    st.markdown("### 📈 SIP Investments")
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        st.markdown("*Add multiple SIP investments with different amounts and returns*")
+    with col2:
+        if st.button("➕ Add SIP", key=f"add_sip_{phase_num}"):
+            st.session_state[f'sips_{phase_num}'].append({
+                'amount': 5000, 'rate': 12, 'step_up': 10
+            })
+    
+    # Display existing SIPs
+    sips_to_remove = []
+    for i, sip in enumerate(st.session_state[f'sips_{phase_num}']):
+        with st.expander(f"SIP {i+1}: ₹{sip['amount']:,}/month @ {sip['rate']}%", expanded=True):
+            col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+            
+            with col1:
+                sip['amount'] = st.number_input(
+                    "Monthly Amount (₹)", 
+                    min_value=0.0, 
+                    value=float(sip['amount']),
+                    key=f"sip_amount_{phase_num}_{i}"
+                )
+            
+            with col2:
+                sip['rate'] = st.number_input(
+                    "Annual Return (%)", 
+                    min_value=0.0, 
+                    value=float(sip['rate']),
+                    key=f"sip_rate_{phase_num}_{i}"
+                )
+            
+            with col3:
+                sip['step_up'] = st.number_input(
+                    "Annual Step-up (%)", 
+                    min_value=0.0, 
+                    value=float(sip['step_up']),
+                    key=f"sip_stepup_{phase_num}_{i}"
+                )
+            
+            with col4:
+                if st.button("🗑️", key=f"remove_sip_{phase_num}_{i}", help="Remove this SIP"):
+                    sips_to_remove.append(i)
+    
+    # Remove SIPs marked for deletion
+    for i in reversed(sips_to_remove):
+        st.session_state[f'sips_{phase_num}'].pop(i)
+        st.rerun()
+    
+    # Lumpsum Section
+    st.markdown("### 💰 Lumpsum Investments")
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        st.markdown("*Add multiple lumpsum investments with different amounts and returns*")
+    with col2:
+        if st.button("➕ Add Lumpsum", key=f"add_lumpsum_{phase_num}"):
+            st.session_state[f'lumpsums_{phase_num}'].append({
+                'amount': 100000, 'rate': 12
+            })
+    
+    # Display existing Lumpsums
+    lumpsums_to_remove = []
+    for i, lumpsum in enumerate(st.session_state[f'lumpsums_{phase_num}']):
+        with st.expander(f"Lumpsum {i+1}: ₹{lumpsum['amount']:,} @ {lumpsum['rate']}%", expanded=True):
+            col1, col2, col3 = st.columns([2, 2, 1])
+            
+            with col1:
+                lumpsum['amount'] = st.number_input(
+                    "Lumpsum Amount (₹)", 
+                    min_value=0.0, 
+                    value=float(lumpsum['amount']),
+                    key=f"lumpsum_amount_{phase_num}_{i}"
+                )
+            
+            with col2:
+                lumpsum['rate'] = st.number_input(
+                    "Annual Return (%)", 
+                    min_value=0.0, 
+                    value=float(lumpsum['rate']),
+                    key=f"lumpsum_rate_{phase_num}_{i}"
+                )
+            
+            with col3:
+                if st.button("🗑️", key=f"remove_lumpsum_{phase_num}_{i}", help="Remove this Lumpsum"):
+                    lumpsums_to_remove.append(i)
+    
+    # Remove Lumpsums marked for deletion
+    for i in reversed(lumpsums_to_remove):
+        st.session_state[f'lumpsums_{phase_num}'].pop(i)
+        st.rerun()
+    
+    # SWP Section
+    st.markdown("### 🏦 SWP (Withdrawal) Plans")
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        st.markdown("*Add withdrawal plans from your portfolio*")
+    with col2:
+        if st.button("➕ Add SWP", key=f"add_swp_{phase_num}"):
+            st.session_state[f'swps_{phase_num}'].append({
+                'amount': 10000, 'rate': 8, 'start_year': 1
+            })
+    
+    # Display existing SWPs
+    swps_to_remove = []
+    for i, swp in enumerate(st.session_state[f'swps_{phase_num}']):
+        with st.expander(f"SWP {i+1}: ₹{swp['amount']:,}/month from Year {swp['start_year']}", expanded=True):
+            col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+            
+            with col1:
+                swp['amount'] = st.number_input(
+                    "Monthly Withdrawal (₹)", 
+                    min_value=0.0, 
+                    value=float(swp['amount']),
+                    key=f"swp_amount_{phase_num}_{i}"
+                )
+            
+            with col2:
+                swp['rate'] = st.number_input(
+                    "Return Rate During SWP (%)", 
+                    min_value=0.0, 
+                    value=float(swp['rate']),
+                    key=f"swp_rate_{phase_num}_{i}"
+                )
+            
+            with col3:
+                swp['start_year'] = st.number_input(
+                    "Start Year", 
+                    min_value=1, 
+                    max_value=years,
+                    value=int(swp['start_year']),
+                    key=f"swp_start_{phase_num}_{i}"
+                )
+            
+            with col4:
+                if st.button("🗑️", key=f"remove_swp_{phase_num}_{i}", help="Remove this SWP"):
+                    swps_to_remove.append(i)
+    
+    # Remove SWPs marked for deletion
+    for i in reversed(swps_to_remove):
+        st.session_state[f'swps_{phase_num}'].pop(i)
+        st.rerun()
+    
+    # Portfolio summary
+    if st.session_state[f'sips_{phase_num}'] or st.session_state[f'lumpsums_{phase_num}'] or st.session_state[f'swps_{phase_num}']:
+        st.markdown("### 📋 Portfolio Summary")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("SIP Investments", len(st.session_state[f'sips_{phase_num}']))
+        with col2:
+            st.metric("Lumpsum Investments", len(st.session_state[f'lumpsums_{phase_num}']))
+        with col3:
+            st.metric("SWP Plans", len(st.session_state[f'swps_{phase_num}']))
+    
+    # Calculate button
+    has_investments = (st.session_state[f'sips_{phase_num}'] or 
+                      st.session_state[f'lumpsums_{phase_num}'] or 
+                      initial_amount > 0)
+    
+    if st.button(f"🧮 Calculate Portfolio - Phase {phase_num}", 
+                key=f"calc_portfolio_{phase_num}", 
+                type="primary",
+                disabled=not has_investments):
+        
+        if has_investments and years > 0:
+            # Perform portfolio calculation
+            nominal_final, real_final, total_invested, total_withdrawn, net_benefit, portfolio_df = calculate_combined_portfolio_parallel(
+                sips_list=st.session_state[f'sips_{phase_num}'],
+                lumpsums_list=st.session_state[f'lumpsums_{phase_num}'],
+                swps_list=st.session_state[f'swps_{phase_num}'],
+                years=years,
+                initial_amount=initial_amount,
+                inflation_rate=inflation_rate
+            )
+            
+            st.session_state[f'portfolio_result_{phase_num}'] = {
+                'nominal_final': nominal_final,
+                'real_final': real_final,
+                'total_invested': total_invested,
+                'total_withdrawn': total_withdrawn,
+                'net_benefit': net_benefit,
+                'portfolio_df': portfolio_df,
+                'inflation_rate': inflation_rate
+            }
+        else:
+            st.error("Please add at least one investment or ensure you have a rollover amount.")
+    
+    # Display results if available
+    if f'portfolio_result_{phase_num}' in st.session_state:
+        result = st.session_state[f'portfolio_result_{phase_num}']
+        display_results(
+            final_amount=result['nominal_final'],
+            total_invested=result['total_invested'],
+            df=result['portfolio_df'],
+            chart_type="Portfolio",
+            total_withdrawn=result['total_withdrawn'],
+            real_final_amount=result['real_final'],
+            inflation_rate=result['inflation_rate']
+        )
+        return result['nominal_final']
+    
+    return None
+
+def old_combined_investment_section(phase_num: int = 1, initial_amount: float = 0.0):
     """Combined investment section UI and calculations for SIP + Lumpsum + SWP."""
     st.subheader(f"� Combined Investment Calculator - Phase {phase_num}")
     
@@ -442,8 +1075,8 @@ def combined_investment_section(phase_num: int = 1, initial_amount: float = 0.0)
 
 def main():
     """Main application."""
-    st.title("🏦 Advanced Financial Calculator")
-    st.markdown("*Comprehensive financial planning with combined SIP, Lumpsum & SWP strategies*")
+    st.title("🏦 Advanced Portfolio Financial Calculator")
+    st.markdown("*Multi-phase portfolio planning with parallel investments & inflation adjustment*")
     st.markdown("---")
     
     # Initialize session state for phases
@@ -451,8 +1084,8 @@ def main():
         st.session_state.num_phases = 1
     
     # Phase management
-    st.sidebar.header("Investment Phases")
-    st.sidebar.markdown("*Build multi-phase investment strategies*")
+    st.sidebar.header("📊 Investment Phases")
+    st.sidebar.markdown("*Build sophisticated multi-phase investment strategies*")
     
     if st.sidebar.button("➕ Add Next Phase"):
         st.session_state.num_phases += 1
@@ -461,7 +1094,7 @@ def main():
     if st.sidebar.button("🗑️ Reset All Phases"):
         st.session_state.num_phases = 1
         # Clear all results
-        keys_to_remove = [key for key in st.session_state.keys() if 'result_' in key]
+        keys_to_remove = [key for key in st.session_state.keys() if 'result_' in key or 'sips_' in key or 'lumpsums_' in key or 'swps_' in key]
         for key in keys_to_remove:
             del st.session_state[key]
         st.sidebar.success("All phases reset!")
@@ -469,18 +1102,23 @@ def main():
     st.sidebar.write(f"**Current Phases:** {st.session_state.num_phases}")
     
     # Instructions
-    with st.expander("📋 How to Use This Calculator", expanded=False):
+    with st.expander("📋 Portfolio Calculator Features", expanded=False):
         st.markdown("""
-        **Combined Investment Strategy:**
-        - **SIP**: Add monthly systematic investments with optional step-up
-        - **Lumpsum**: Add one-time investment amount
-        - **SWP**: Set monthly withdrawals starting from any year
-        - **Multi-Phase**: Chain strategies where each phase's final amount becomes the next phase's starting amount
+        **🎯 Multiple Parallel Investments:**
+        - **Multiple SIPs**: Add different SIP amounts with varying return rates
+        - **Multiple Lumpsums**: Invest different amounts across various instruments
+        - **Multiple SWPs**: Set up multiple withdrawal streams with different rates
         
-        **Example Scenarios:**
-        1. **Wealth Building**: Phase 1 with SIP + Lumpsum for 20 years
-        2. **Retirement Planning**: Phase 2 with SWP withdrawals for 15 years
-        3. **Mixed Strategy**: Combine all three in a single phase
+        **💰 Advanced Features:**
+        - **Inflation Adjustment**: See both nominal and real (inflation-adjusted) values
+        - **Portfolio Diversification**: Mix investments with different risk-return profiles
+        - **Multi-Phase Planning**: Chain strategies across different life phases
+        
+        **🔄 Real-World Scenarios:**
+        1. **Diversified SIP Portfolio**: ₹10K in equity funds (15% return) + ₹5K in debt funds (8% return)
+        2. **Mixed Investment Strategy**: Lumpsum in real estate (12% return) + SIP in equity (18% return)
+        3. **Retirement Planning**: Growth phase → Income generation phase with multiple SWPs
+        4. **Goal-Based Investing**: Different investments for different financial goals
         """)
     
     # Display phases
@@ -500,8 +1138,8 @@ def main():
             )
             rollover_amount += additional_investment
         
-        # Combined investment section
-        phase_result = combined_investment_section(phase, rollover_amount)
+        # Portfolio investment section
+        phase_result = portfolio_investment_section(phase, rollover_amount)
         
         # Update rollover amount for next phase
         if phase_result is not None:
@@ -513,7 +1151,8 @@ def main():
     
     # Footer
     st.markdown("---")
-    st.markdown("*Built with ❤️ using Streamlit | Financial Calculator v2.0*")
+    st.markdown("*Built with ❤️ using Streamlit | Advanced Portfolio Calculator v3.0*")
+    st.markdown("*Features: Multi-parallel investments, Inflation adjustment, Multi-phase planning*")
 
 if __name__ == "__main__":
     main()
