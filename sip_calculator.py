@@ -1,15 +1,16 @@
 import streamlit as st
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from typing import Tuple, Dict, Any
 
-# Configure page
+# Configure page - must be first Streamlit command
 st.set_page_config(
     page_title="Advanced Financial Calculator",
     page_icon="💰",
     layout="wide"
 )
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from typing import Tuple, Dict, Any
 
 def calculate_sip(monthly_amount: float, annual_rate: float, years: int, step_up: float = 0.0, initial_amount: float = 0.0) -> Tuple[float, float, pd.DataFrame]:
     """
@@ -334,14 +335,14 @@ def calculate_multiple_swps(swps_list: list, portfolio_values: list, years: int)
     
     return current_amount, total_withdrawn, combined_data
 
-def apply_inflation_adjustment(nominal_values: list, inflation_rate: float, start_year: int = 0) -> list:
+def apply_inflation_adjustment(nominal_values: list, inflation_rate: float, cumulative_years: list) -> list:
     """
-    Apply inflation adjustment to nominal values.
+    Apply inflation adjustment to nominal values using cumulative years since start.
     
     Args:
         nominal_values: List of nominal values
         inflation_rate: Annual inflation rate (%)
-        start_year: Starting year (default: 0)
+        cumulative_years: List of cumulative years since the very start of investment plan
     
     Returns:
         List of real (inflation-adjusted) values
@@ -351,8 +352,8 @@ def apply_inflation_adjustment(nominal_values: list, inflation_rate: float, star
     
     real_values = []
     for i, nominal_value in enumerate(nominal_values):
-        years = start_year + i + 1
-        real_value = nominal_value / ((1 + inflation_rate / 100) ** years)
+        cumulative_year = cumulative_years[i] if isinstance(cumulative_years, list) else cumulative_years
+        real_value = nominal_value / ((1 + inflation_rate / 100) ** cumulative_year)
         real_values.append(real_value)
     
     return real_values
@@ -362,19 +363,25 @@ def calculate_combined_portfolio_parallel(
     lumpsums_list: list = None, 
     swps_list: list = None,
     years: int = 10,
-    initial_amount: float = 0.0,
-    inflation_rate: float = 0.0
+    rollover_nominal: float = 0.0,
+    additional_lumpsum: float = 0.0,
+    lumpsum_roi: float = 12.0,
+    inflation_rate: float = 0.0,
+    phase_start_year: int = 0
 ) -> Tuple[float, float, float, float, float, pd.DataFrame]:
     """
     Calculate combined portfolio with multiple parallel investments and inflation adjustment.
     
     Args:
         sips_list: List of SIP configurations
-        lumpsums_list: List of Lumpsum configurations
+        lumpsums_list: List of Lumpsum configurations (additional lumpsums only)
         swps_list: List of SWP configurations
-        years: Investment duration
-        initial_amount: Initial rollover amount
+        years: Investment duration for this phase
+        rollover_nominal: Nominal rollover amount from previous phase (treated as lumpsum)
+        additional_lumpsum: Additional lumpsum amount specified by user
+        lumpsum_roi: ROI for combined lumpsum (rollover + additional)
         inflation_rate: Annual inflation rate (%)
+        phase_start_year: Cumulative years elapsed before this phase starts
     
     Returns:
         Tuple of (nominal_final, real_final, total_invested, total_withdrawn, net_benefit, portfolio_df)
@@ -386,12 +393,26 @@ def calculate_combined_portfolio_parallel(
     # Calculate SIPs
     sip_final, sip_invested, sip_df = calculate_multiple_sips(sips_list, years, 0)
     
-    # Calculate Lumpsums (including initial amount)
-    lumpsum_final, lumpsum_invested, lumpsum_df = calculate_multiple_lumpsums(lumpsums_list, years, initial_amount)
+    # Handle rollover + additional lumpsum as combined lumpsum investment
+    combined_lumpsum_amount = rollover_nominal + additional_lumpsum
+    combined_lumpsum_invested = combined_lumpsum_amount
+    
+    # Calculate growth of combined lumpsum (rollover + additional) using specified ROI
+    if combined_lumpsum_amount > 0:
+        combined_lumpsum_final = combined_lumpsum_amount * ((1 + lumpsum_roi / 100) ** years)
+    else:
+        combined_lumpsum_final = 0
+    
+    # Calculate other lumpsums separately (if any)
+    other_lumpsum_final, other_lumpsum_invested, lumpsum_df = calculate_multiple_lumpsums(lumpsums_list, years, 0)
+    
+    # Combine all lumpsum results
+    total_lumpsum_final = combined_lumpsum_final + other_lumpsum_final
+    total_lumpsum_invested = combined_lumpsum_invested + other_lumpsum_invested
     
     # Combine SIP and Lumpsum results
-    total_invested = sip_invested + lumpsum_invested
-    portfolio_value_nominal = sip_final + lumpsum_final
+    total_invested = sip_invested + total_lumpsum_invested
+    portfolio_value_nominal = sip_final + total_lumpsum_final
     
     # Apply SWPs (simplified - apply to total portfolio)
     if swps_list:
@@ -402,10 +423,16 @@ def calculate_combined_portfolio_parallel(
         total_withdrawn = 0
         swp_df = pd.DataFrame()
     
-    # Create combined portfolio DataFrame
+    # Create combined portfolio DataFrame with cumulative timeline
     portfolio_data = []
     for year in range(1, years + 1):
-        year_data = {'Year': year}
+        # Calculate cumulative years since the very start of investment plan
+        cumulative_year = phase_start_year + year
+        
+        year_data = {
+            'Year': year,
+            'Cumulative_Years': cumulative_year  # Total years since start of entire plan
+        }
         
         # Get SIP data for this year
         if not sip_df.empty:
@@ -420,18 +447,27 @@ def calculate_combined_portfolio_parallel(
             year_data['Total_SIP_Invested'] = 0
             year_data['Total_SIP_Value'] = 0
         
-        # Get Lumpsum data for this year
+        # Calculate combined lumpsum value for this year (rollover + additional)
+        if combined_lumpsum_amount > 0:
+            year_combined_lumpsum_value = combined_lumpsum_amount * ((1 + lumpsum_roi / 100) ** year)
+        else:
+            year_combined_lumpsum_value = 0
+        
+        # Get other lumpsum data for this year
         if not lumpsum_df.empty:
             year_lumpsum_data = lumpsum_df[lumpsum_df['Year'] == year]
             if not year_lumpsum_data.empty:
-                year_data['Total_Lumpsum_Invested'] = year_lumpsum_data['Total_Lumpsum_Invested'].iloc[0]
-                year_data['Total_Lumpsum_Value'] = year_lumpsum_data['Total_Lumpsum_Value'].iloc[0]
+                year_other_lumpsum_value = year_lumpsum_data['Total_Lumpsum_Value'].iloc[0]
             else:
-                year_data['Total_Lumpsum_Invested'] = total_invested
-                year_data['Total_Lumpsum_Value'] = initial_amount * ((1 + 8/100) ** year)  # Default growth
+                year_other_lumpsum_value = 0
         else:
-            year_data['Total_Lumpsum_Invested'] = total_invested
-            year_data['Total_Lumpsum_Value'] = initial_amount * ((1 + 8/100) ** year) if initial_amount > 0 else 0
+            year_other_lumpsum_value = 0
+        
+        # Combine all lumpsum values
+        year_data['Rollover_Lumpsum_Invested'] = rollover_nominal
+        year_data['Additional_Lumpsum_Invested'] = additional_lumpsum + other_lumpsum_invested
+        year_data['Total_Lumpsum_Invested'] = combined_lumpsum_invested + other_lumpsum_invested
+        year_data['Total_Lumpsum_Value'] = year_combined_lumpsum_value + year_other_lumpsum_value
         
         # Calculate portfolio totals
         nominal_portfolio_value = year_data['Total_SIP_Value'] + year_data['Total_Lumpsum_Value']
@@ -453,10 +489,11 @@ def calculate_combined_portfolio_parallel(
     
     portfolio_df = pd.DataFrame(portfolio_data)
     
-    # Apply inflation adjustment
+    # Apply inflation adjustment using cumulative years for reporting only
     if inflation_rate > 0 and not portfolio_df.empty:
         nominal_values = portfolio_df['Nominal_Portfolio_Value'].tolist()
-        real_values = apply_inflation_adjustment(nominal_values, inflation_rate)
+        cumulative_years = portfolio_df['Cumulative_Years'].tolist()
+        real_values = apply_inflation_adjustment(nominal_values, inflation_rate, cumulative_years)
         portfolio_df['Real_Portfolio_Value'] = real_values
         portfolio_value_real = real_values[-1] if real_values else 0
     else:
@@ -643,7 +680,16 @@ def display_results(final_amount: float, total_invested: float, df: pd.DataFrame
                         st.metric("SIP Current Value", f"₹{sip_value:,.2f}")
             
             with col2:
-                if 'Total_Lumpsum_Invested' in df.columns:
+                if 'Rollover_Lumpsum_Invested' in df.columns and 'Additional_Lumpsum_Invested' in df.columns:
+                    rollover_invested = df['Rollover_Lumpsum_Invested'].iloc[-1] if not df.empty else 0
+                    additional_invested = df['Additional_Lumpsum_Invested'].iloc[-1] if not df.empty else 0
+                    lumpsum_value = df['Total_Lumpsum_Value'].iloc[-1] if 'Total_Lumpsum_Value' in df.columns else 0
+                    
+                    st.metric("Rollover Lumpsum", f"₹{rollover_invested:,.2f}")
+                    st.metric("Additional Lumpsum", f"₹{additional_invested:,.2f}")
+                    if lumpsum_value > 0:
+                        st.metric("Total Lumpsum Value", f"₹{lumpsum_value:,.2f}")
+                elif 'Total_Lumpsum_Invested' in df.columns:
                     lumpsum_invested = df['Total_Lumpsum_Invested'].iloc[-1] if not df.empty else 0
                     lumpsum_value = df['Total_Lumpsum_Value'].iloc[-1] if 'Total_Lumpsum_Value' in df.columns else 0
                     st.metric("Lumpsum Investment", f"₹{lumpsum_invested:,.2f}")
@@ -704,19 +750,22 @@ def display_results(final_amount: float, total_invested: float, df: pd.DataFrame
     
     # Display year-wise breakdown
     st.subheader("📅 Year-wise Breakdown")
-    st.dataframe(df, width='stretch')
+    st.dataframe(df, use_container_width=True)
     
     # Display chart
     st.subheader("📈 Growth Visualization")
     fig = create_growth_chart(df, chart_type)
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
     
-def portfolio_investment_section(phase_num: int = 1, initial_amount: float = 0.0):
+def portfolio_investment_section(phase_num: int = 1, rollover_nominal: float = 0.0, cumulative_years_before_phase: int = 0):
     """Portfolio investment section UI with multiple parallel investments."""
     st.subheader(f"🎯 Portfolio Calculator - Phase {phase_num}")
     
-    if initial_amount > 0:
-        st.info(f"Starting with rollover amount: ₹{initial_amount:,.2f}")
+    if rollover_nominal > 0:
+        st.info(f"💰 **Rollover from Previous Phase**: ₹{rollover_nominal:,.2f} (will be treated as Lumpsum investment)")
+    
+    if cumulative_years_before_phase > 0:
+        st.info(f"📅 **Cumulative Timeline**: {cumulative_years_before_phase} years have elapsed since start of investment plan")
     
     # Initialize session state for multiple investments
     if f'sips_{phase_num}' not in st.session_state:
@@ -744,7 +793,7 @@ def portfolio_investment_section(phase_num: int = 1, initial_amount: float = 0.0
             min_value=0.0, 
             value=6.0,
             key=f"inflation_rate_{phase_num}",
-            help="Used to calculate real (inflation-adjusted) values"
+            help="Used to calculate real (inflation-adjusted) values for reporting"
         )
     
     with col3:
@@ -754,6 +803,35 @@ def portfolio_investment_section(phase_num: int = 1, initial_amount: float = 0.0
             st.session_state[f'lumpsums_{phase_num}'] = []
             st.session_state[f'swps_{phase_num}'] = []
             st.success("All investments cleared!")
+    
+    # Rollover + Additional Lumpsum Section
+    st.markdown("### 💰 Lumpsum Investment (Rollover + Additional)")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        additional_lumpsum = st.number_input(
+            "Additional Lumpsum Amount (₹)", 
+            min_value=0.0, 
+            value=0.0,
+            key=f"additional_lumpsum_{phase_num}",
+            help="Additional lumpsum to add to rollover amount"
+        )
+        
+        total_lumpsum = rollover_nominal + additional_lumpsum
+        st.info(f"**Total Lumpsum**: ₹{rollover_nominal:,.2f} (rollover) + ₹{additional_lumpsum:,.2f} (additional) = ₹{total_lumpsum:,.2f}")
+    
+    with col2:
+        lumpsum_roi = st.number_input(
+            "Lumpsum ROI (%)", 
+            min_value=0.0, 
+            value=12.0,
+            key=f"lumpsum_roi_{phase_num}",
+            help="ROI for combined lumpsum (rollover + additional)"
+        )
+        
+        if total_lumpsum > 0:
+            projected_value = total_lumpsum * ((1 + lumpsum_roi / 100) ** years)
+            st.metric("Projected Lumpsum Value", f"₹{projected_value:,.2f}")
     
     # SIP Section
     st.markdown("### 📈 SIP Investments")
@@ -806,22 +884,22 @@ def portfolio_investment_section(phase_num: int = 1, initial_amount: float = 0.0
         st.session_state[f'sips_{phase_num}'].pop(i)
         st.rerun()
     
-    # Lumpsum Section
-    st.markdown("### 💰 Lumpsum Investments")
+    # Other Lumpsum Section (separate from rollover)
+    st.markdown("### � Other Lumpsum Investments")
     col1, col2 = st.columns([3, 1])
     
     with col1:
-        st.markdown("*Add multiple lumpsum investments with different amounts and returns*")
+        st.markdown("*Add other lumpsum investments separate from rollover amount*")
     with col2:
-        if st.button("➕ Add Lumpsum", key=f"add_lumpsum_{phase_num}"):
+        if st.button("➕ Add Other Lumpsum", key=f"add_other_lumpsum_{phase_num}"):
             st.session_state[f'lumpsums_{phase_num}'].append({
                 'amount': 100000, 'rate': 12
             })
     
-    # Display existing Lumpsums
+    # Display existing Other Lumpsums
     lumpsums_to_remove = []
     for i, lumpsum in enumerate(st.session_state[f'lumpsums_{phase_num}']):
-        with st.expander(f"Lumpsum {i+1}: ₹{lumpsum['amount']:,} @ {lumpsum['rate']}%", expanded=True):
+        with st.expander(f"Other Lumpsum {i+1}: ₹{lumpsum['amount']:,} @ {lumpsum['rate']}%", expanded=True):
             col1, col2, col3 = st.columns([2, 2, 1])
             
             with col1:
@@ -829,7 +907,7 @@ def portfolio_investment_section(phase_num: int = 1, initial_amount: float = 0.0
                     "Lumpsum Amount (₹)", 
                     min_value=0.0, 
                     value=float(lumpsum['amount']),
-                    key=f"lumpsum_amount_{phase_num}_{i}"
+                    key=f"other_lumpsum_amount_{phase_num}_{i}"
                 )
             
             with col2:
@@ -837,14 +915,14 @@ def portfolio_investment_section(phase_num: int = 1, initial_amount: float = 0.0
                     "Annual Return (%)", 
                     min_value=0.0, 
                     value=float(lumpsum['rate']),
-                    key=f"lumpsum_rate_{phase_num}_{i}"
+                    key=f"other_lumpsum_rate_{phase_num}_{i}"
                 )
             
             with col3:
-                if st.button("🗑️", key=f"remove_lumpsum_{phase_num}_{i}", help="Remove this Lumpsum"):
+                if st.button("🗑️", key=f"remove_other_lumpsum_{phase_num}_{i}", help="Remove this Lumpsum"):
                     lumpsums_to_remove.append(i)
     
-    # Remove Lumpsums marked for deletion
+    # Remove Other Lumpsums marked for deletion
     for i in reversed(lumpsums_to_remove):
         st.session_state[f'lumpsums_{phase_num}'].pop(i)
         st.rerun()
@@ -902,21 +980,23 @@ def portfolio_investment_section(phase_num: int = 1, initial_amount: float = 0.0
         st.rerun()
     
     # Portfolio summary
-    if st.session_state[f'sips_{phase_num}'] or st.session_state[f'lumpsums_{phase_num}'] or st.session_state[f'swps_{phase_num}']:
+    if st.session_state[f'sips_{phase_num}'] or st.session_state[f'lumpsums_{phase_num}'] or st.session_state[f'swps_{phase_num}'] or total_lumpsum > 0:
         st.markdown("### 📋 Portfolio Summary")
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("SIP Investments", len(st.session_state[f'sips_{phase_num}']))
         with col2:
-            st.metric("Lumpsum Investments", len(st.session_state[f'lumpsums_{phase_num}']))
+            st.metric("Other Lumpsum Investments", len(st.session_state[f'lumpsums_{phase_num}']))
         with col3:
             st.metric("SWP Plans", len(st.session_state[f'swps_{phase_num}']))
+        with col4:
+            st.metric("Total Lumpsum", f"₹{total_lumpsum:,.0f}")
     
     # Calculate button
     has_investments = (st.session_state[f'sips_{phase_num}'] or 
                       st.session_state[f'lumpsums_{phase_num}'] or 
-                      initial_amount > 0)
+                      total_lumpsum > 0)
     
     if st.button(f"🧮 Calculate Portfolio - Phase {phase_num}", 
                 key=f"calc_portfolio_{phase_num}", 
@@ -924,14 +1004,17 @@ def portfolio_investment_section(phase_num: int = 1, initial_amount: float = 0.0
                 disabled=not has_investments):
         
         if has_investments and years > 0:
-            # Perform portfolio calculation
+            # Perform portfolio calculation with updated parameters
             nominal_final, real_final, total_invested, total_withdrawn, net_benefit, portfolio_df = calculate_combined_portfolio_parallel(
                 sips_list=st.session_state[f'sips_{phase_num}'],
                 lumpsums_list=st.session_state[f'lumpsums_{phase_num}'],
                 swps_list=st.session_state[f'swps_{phase_num}'],
                 years=years,
-                initial_amount=initial_amount,
-                inflation_rate=inflation_rate
+                rollover_nominal=rollover_nominal,
+                additional_lumpsum=additional_lumpsum,
+                lumpsum_roi=lumpsum_roi,
+                inflation_rate=inflation_rate,
+                phase_start_year=cumulative_years_before_phase
             )
             
             st.session_state[f'portfolio_result_{phase_num}'] = {
@@ -941,7 +1024,10 @@ def portfolio_investment_section(phase_num: int = 1, initial_amount: float = 0.0
                 'total_withdrawn': total_withdrawn,
                 'net_benefit': net_benefit,
                 'portfolio_df': portfolio_df,
-                'inflation_rate': inflation_rate
+                'inflation_rate': inflation_rate,
+                'rollover_nominal': rollover_nominal,
+                'additional_lumpsum': additional_lumpsum,
+                'lumpsum_roi': lumpsum_roi
             }
         else:
             st.error("Please add at least one investment or ensure you have a rollover amount.")
@@ -958,7 +1044,7 @@ def portfolio_investment_section(phase_num: int = 1, initial_amount: float = 0.0
             real_final_amount=result['real_final'],
             inflation_rate=result['inflation_rate']
         )
-        return result['nominal_final']
+        return result['nominal_final']  # Return nominal value for rollover
     
     return None
 
@@ -1123,6 +1209,7 @@ def main():
     
     # Display phases
     rollover_amount = 0.0
+    cumulative_years = 0  # Track total years elapsed since start
     
     for phase in range(1, st.session_state.num_phases + 1):
         st.markdown(f"## 🎯 Phase {phase}")
@@ -1138,14 +1225,23 @@ def main():
             )
             rollover_amount += additional_investment
         
-        # Portfolio investment section
-        phase_result = portfolio_investment_section(phase, rollover_amount)
+        # Portfolio investment section (passing rollover as nominal amount and cumulative years)
+        phase_result = portfolio_investment_section(phase, rollover_amount, cumulative_years)
         
-        # Update rollover amount for next phase
+        # Update rollover amount and cumulative years for next phase (using nominal value only)
         if phase_result is not None:
-            rollover_amount = phase_result
+            rollover_amount = phase_result  # This is the nominal final amount
+            
+            # Get the duration of the current phase to update cumulative years
+            if f'portfolio_result_{phase}' in st.session_state:
+                result = st.session_state[f'portfolio_result_{phase}']
+                if 'portfolio_df' in result and not result['portfolio_df'].empty:
+                    phase_years = len(result['portfolio_df'])
+                    cumulative_years += phase_years
+            
             if phase < st.session_state.num_phases:
-                st.success(f"✅ Phase {phase} completed! Final amount ₹{rollover_amount:,.2f} will roll over to Phase {phase + 1}")
+                st.success(f"✅ Phase {phase} completed! **Nominal amount** ₹{rollover_amount:,.2f} will roll over to Phase {phase + 1} as Lumpsum investment")
+                st.info(f"📅 **Cumulative Years**: {cumulative_years} years have elapsed since start of investment plan")
         
         st.markdown("---")
     
@@ -1154,5 +1250,99 @@ def main():
     st.markdown("*Built with ❤️ using Streamlit | Advanced Portfolio Calculator v3.0*")
     st.markdown("*Features: Multi-parallel investments, Inflation adjustment, Multi-phase planning*")
 
+def test_cumulative_inflation_logic():
+    """
+    Regression test for cumulative inflation handling across multiple phases.
+    
+    INFLATION LOGIC EXPLANATION:
+    - Nominal values represent actual rupees that get invested/rolled over
+    - Real values are inflation-adjusted for reporting purposes only  
+    - Real values use CUMULATIVE years since start, not per-phase years
+    
+    Example: 2-phase scenario with 6% inflation
+    - Phase 1: 10 years, Phase 2: 10 years  
+    - Total investment period: 20 years
+    - Phase 1 real values: discounted by years 1-10
+    - Phase 2 real values: discounted by years 11-20 (cumulative)
+    """
+    import math
+    
+    print('\n🧪 CUMULATIVE INFLATION LOGIC TEST')
+    print('=' * 50)
+    
+    # Test parameters
+    inflation_rate = 6.0
+    initial_lumpsum = 1_000_000
+    roi = 12.0
+    
+    # Phase 1: 10 years
+    phase1_years = 10
+    phase1_nominal_final = initial_lumpsum * ((1 + roi / 100) ** phase1_years)
+    # Real value at end of phase 1 (10 years cumulative)
+    phase1_real_final = phase1_nominal_final / ((1 + inflation_rate / 100) ** phase1_years)
+    
+    print(f'\n1️⃣ Phase 1 (Years 1-10):')
+    print(f'   Initial Investment: ₹{initial_lumpsum:,.2f}')
+    print(f'   Nominal Final: ₹{phase1_nominal_final:,.2f}')
+    print(f'   Real Final (10 years): ₹{phase1_real_final:,.2f}')
+    
+    # Phase 2: 10 more years (rollover the NOMINAL amount)
+    phase2_years = 10
+    phase2_nominal_final = phase1_nominal_final * ((1 + roi / 100) ** phase2_years)
+    # Real value at end of phase 2 (20 years cumulative - this is the key fix!)
+    cumulative_years_total = phase1_years + phase2_years
+    phase2_real_final = phase2_nominal_final / ((1 + inflation_rate / 100) ** cumulative_years_total)
+    
+    print(f'\n2️⃣ Phase 2 (Years 11-20):')
+    print(f'   Rollover Nominal: ₹{phase1_nominal_final:,.2f}')
+    print(f'   Nominal Final: ₹{phase2_nominal_final:,.2f}')
+    print(f'   Real Final (20 years cumulative): ₹{phase2_real_final:,.2f}')
+    
+    # Expected values for validation
+    expected_phase1_nominal = 3_105_848.21
+    expected_phase1_real = 1_734_289.42
+    expected_phase2_nominal = 9_646_293.09
+    expected_phase2_real = 3_007_759.78
+    
+    print(f'\n✅ Validation (with tolerance):')
+    
+    # Validate Phase 1
+    assert math.isclose(phase1_nominal_final, expected_phase1_nominal, rel_tol=1e-2), \
+        f"Phase 1 nominal: got {phase1_nominal_final:.2f}, expected {expected_phase1_nominal:.2f}"
+    print(f'   ✓ Phase 1 Nominal: {phase1_nominal_final:,.2f} ≈ {expected_phase1_nominal:,.2f}')
+    
+    assert math.isclose(phase1_real_final, expected_phase1_real, rel_tol=1e-2), \
+        f"Phase 1 real: got {phase1_real_final:.2f}, expected {expected_phase1_real:.2f}"
+    print(f'   ✓ Phase 1 Real: {phase1_real_final:,.2f} ≈ {expected_phase1_real:,.2f}')
+    
+    # Validate Phase 2  
+    assert math.isclose(phase2_nominal_final, expected_phase2_nominal, rel_tol=1e-2), \
+        f"Phase 2 nominal: got {phase2_nominal_final:.2f}, expected {expected_phase2_nominal:.2f}"
+    print(f'   ✓ Phase 2 Nominal: {phase2_nominal_final:,.2f} ≈ {expected_phase2_nominal:,.2f}')
+    
+    assert math.isclose(phase2_real_final, expected_phase2_real, rel_tol=1e-2), \
+        f"Phase 2 real: got {phase2_real_final:.2f}, expected {expected_phase2_real:.2f}"
+    print(f'   ✓ Phase 2 Real: {phase2_real_final:,.2f} ≈ {expected_phase2_real:,.2f}')
+    
+    # Test the apply_inflation_adjustment function directly
+    print(f'\n🔬 Function Test:')
+    nominal_values = [phase1_nominal_final, phase2_nominal_final]
+    cumulative_years = [10, 20]
+    real_values = apply_inflation_adjustment(nominal_values, inflation_rate, cumulative_years)
+    
+    assert math.isclose(real_values[0], expected_phase1_real, rel_tol=1e-2), \
+        f"Function Phase 1 real: got {real_values[0]:.2f}, expected {expected_phase1_real:.2f}"
+    assert math.isclose(real_values[1], expected_phase2_real, rel_tol=1e-2), \
+        f"Function Phase 2 real: got {real_values[1]:.2f}, expected {expected_phase2_real:.2f}"
+    
+    print(f'   ✓ apply_inflation_adjustment function working correctly')
+    print(f'\n🎯 All tests passed! Cumulative inflation logic is correct.')
+    
 if __name__ == "__main__":
-    main()
+    import sys
+    
+    # Run test if --test argument is provided
+    if len(sys.argv) > 1 and sys.argv[1] == '--test':
+        test_cumulative_inflation_logic()
+    else:
+        main()
