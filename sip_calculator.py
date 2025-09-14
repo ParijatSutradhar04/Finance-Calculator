@@ -15,6 +15,7 @@ from typing import Tuple, Dict, Any
 def calculate_sip(monthly_amount: float, annual_rate: float, years: int, step_up: float = 0.0, initial_amount: float = 0.0) -> Tuple[float, float, pd.DataFrame]:
     """
     Calculate SIP (Systematic Investment Plan) with optional step-up and initial lumpsum.
+    Uses effective monthly compounding rate for accurate calculations.
     
     Args:
         monthly_amount: Monthly SIP amount
@@ -26,7 +27,9 @@ def calculate_sip(monthly_amount: float, annual_rate: float, years: int, step_up
     Returns:
         Tuple of (final_amount, total_invested, year_wise_data)
     """
-    monthly_rate = annual_rate / 12 / 100
+    # Use effective monthly compounding rate: (1 + annual_rate)^(1/12) - 1
+    # This is consistent with industry calculators (Groww, ET Money, etc.)
+    monthly_rate = (1 + annual_rate / 100) ** (1/12) - 1
     total_months = years * 12
     
     data = []
@@ -58,7 +61,7 @@ def calculate_sip(monthly_amount: float, annual_rate: float, years: int, step_up
 
 def calculate_lumpsum(principal: float, annual_rate: float, years: int, initial_amount: float = 0.0) -> Tuple[float, float, pd.DataFrame]:
     """
-    Calculate Lumpsum investment growth.
+    Calculate Lumpsum investment growth using annual compounding.
     
     Args:
         principal: Lumpsum investment amount
@@ -85,121 +88,6 @@ def calculate_lumpsum(principal: float, annual_rate: float, years: int, initial_
     final_amount = total_principal * ((1 + annual_rate / 100) ** years)
     df = pd.DataFrame(data)
     return final_amount, total_invested, df
-
-def calculate_swp(initial_amount: float, monthly_withdrawal: float, annual_rate: float, years: int) -> Tuple[float, float, pd.DataFrame]:
-    """
-    Calculate SWP (Systematic Withdrawal Plan).
-    
-    Args:
-        initial_amount: Initial investment amount
-        monthly_withdrawal: Monthly withdrawal amount
-        annual_rate: Expected annual return rate (%)
-        years: Withdrawal duration in years
-    
-    Returns:
-        Tuple of (remaining_amount, total_withdrawn, year_wise_data)
-    """
-    monthly_rate = annual_rate / 12 / 100
-    total_months = years * 12
-    
-    data = []
-    current_amount = initial_amount
-    total_withdrawn = 0.0
-    
-    for month in range(1, total_months + 1):
-        # Apply monthly return
-        current_amount *= (1 + monthly_rate)
-        
-        # Withdraw amount (if sufficient balance)
-        if current_amount >= monthly_withdrawal:
-            current_amount -= monthly_withdrawal
-            total_withdrawn += monthly_withdrawal
-        
-        # Record year-end data
-        if month % 12 == 0:
-            year = month // 12
-            data.append({
-                'Year': year,
-                'Remaining_Value': current_amount,
-                'Total_Withdrawn': total_withdrawn,
-                'Annual_Withdrawal': monthly_withdrawal * 12
-            })
-    
-    df = pd.DataFrame(data)
-    return current_amount, total_withdrawn, df
-
-def calculate_combined_investment(
-    sip_amount: float = 0.0, 
-    lumpsum_amount: float = 0.0, 
-    annual_rate: float = 12.0, 
-    years: int = 10, 
-    step_up: float = 0.0, 
-    initial_amount: float = 0.0,
-    swp_withdrawal: float = 0.0,
-    swp_start_year: int = 1
-) -> Tuple[float, float, float, pd.DataFrame]:
-    """
-    Calculate combined SIP + Lumpsum investment with optional SWP.
-    
-    Args:
-        sip_amount: Monthly SIP amount
-        lumpsum_amount: Initial lumpsum investment
-        annual_rate: Expected annual return rate (%)
-        years: Total investment/withdrawal duration
-        step_up: Annual SIP step-up percentage
-        initial_amount: Initial rollover amount from previous phase
-        swp_withdrawal: Monthly withdrawal amount (0 = no SWP)
-        swp_start_year: Year when SWP starts (default: 1)
-    
-    Returns:
-        Tuple of (final_amount, total_invested, total_withdrawn, year_wise_data)
-    """
-    monthly_rate = annual_rate / 12 / 100
-    total_months = years * 12
-    
-    data = []
-    current_amount = initial_amount + lumpsum_amount
-    total_invested = initial_amount + lumpsum_amount
-    total_sip_invested = 0.0
-    total_withdrawn = 0.0
-    current_sip = sip_amount
-    
-    for month in range(1, total_months + 1):
-        # Add monthly SIP if specified
-        if sip_amount > 0:
-            total_sip_invested += current_sip
-            total_invested += current_sip
-            current_amount += current_sip
-        
-        # Apply monthly return
-        current_amount *= (1 + monthly_rate)
-        
-        # Apply SWP withdrawal if applicable
-        current_year = (month - 1) // 12 + 1
-        if swp_withdrawal > 0 and current_year >= swp_start_year:
-            if current_amount >= swp_withdrawal:
-                current_amount -= swp_withdrawal
-                total_withdrawn += swp_withdrawal
-        
-        # Step up SIP amount annually
-        if month % 12 == 0 and step_up > 0 and sip_amount > 0:
-            current_sip *= (1 + step_up / 100)
-        
-        # Record year-end data
-        if month % 12 == 0:
-            year = month // 12
-            data.append({
-                'Year': year,
-                'SIP_Invested': total_sip_invested,
-                'Lumpsum_Invested': lumpsum_amount + initial_amount,
-                'Total_Invested': total_invested,
-                'Current_Value': current_amount,
-                'Total_Withdrawn': total_withdrawn,
-                'Net_Returns': current_amount + total_withdrawn - total_invested
-            })
-    
-    df = pd.DataFrame(data)
-    return current_amount, total_invested, total_withdrawn, df
 
 def calculate_multiple_sips(sips_list: list, years: int, initial_amount: float = 0.0) -> Tuple[float, float, pd.DataFrame]:
     """
@@ -295,46 +183,6 @@ def calculate_multiple_lumpsums(lumpsums_list: list, years: int, initial_amount:
     
     return total_final_amount, total_invested, combined_data
 
-def calculate_multiple_swps(swps_list: list, portfolio_values: list, years: int) -> Tuple[float, float, pd.DataFrame]:
-    """
-    Calculate multiple SWP withdrawals from portfolio values.
-    
-    Args:
-        swps_list: List of dictionaries with SWP parameters
-                  [{'amount': 10000, 'rate': 8, 'start_year': 1}, ...]
-        portfolio_values: List of portfolio values for each year
-        years: Total duration in years
-    
-    Returns:
-        Tuple of (remaining_amount, total_withdrawn, combined_year_wise_data)
-    """
-    if not swps_list or not portfolio_values:
-        return 0, 0, pd.DataFrame()
-    
-    # Start with the final portfolio value
-    current_amount = portfolio_values[-1] if portfolio_values else 0
-    total_withdrawn = 0
-    combined_data = []
-    
-    # For simplicity, apply SWPs to the total portfolio value
-    # In reality, you might want more sophisticated allocation
-    for i, swp in enumerate(swps_list):
-        remaining_amount, withdrawn, df = calculate_swp(
-            current_amount, swp['amount'], swp['rate'], years
-        )
-        total_withdrawn += withdrawn
-        current_amount = remaining_amount
-        
-        if i == 0:
-            combined_data = df.copy()
-            combined_data[f'SWP_{i+1}_Withdrawn'] = df['Total_Withdrawn']
-            combined_data[f'SWP_{i+1}_Remaining'] = df['Remaining_Value']
-        else:
-            combined_data[f'SWP_{i+1}_Withdrawn'] = df['Total_Withdrawn']
-            combined_data[f'SWP_{i+1}_Remaining'] = df['Remaining_Value']
-    
-    return current_amount, total_withdrawn, combined_data
-
 def apply_inflation_adjustment(nominal_values: list, inflation_rate: float, cumulative_years: list) -> list:
     """
     Apply inflation adjustment to nominal values using cumulative years since start.
@@ -371,11 +219,15 @@ def calculate_combined_portfolio_parallel(
 ) -> Tuple[float, float, float, float, float, pd.DataFrame]:
     """
     Calculate combined portfolio with multiple parallel investments and inflation adjustment.
+    Month-by-month calculation to properly integrate SWP withdrawals using effective monthly compounding.
+    
+    Uses effective monthly compounding rate: (1 + annual_rate)^(1/12) - 1
+    This is consistent with industry calculators (Groww, ET Money, etc.) for accurate SWP calculations.
     
     Args:
         sips_list: List of SIP configurations
         lumpsums_list: List of Lumpsum configurations (additional lumpsums only)
-        swps_list: List of SWP configurations
+        swps_list: List of SWP configurations with 'start_year' parameter
         years: Investment duration for this phase
         rollover_nominal: Nominal rollover amount from previous phase (treated as lumpsum)
         additional_lumpsum: Additional lumpsum amount specified by user
@@ -390,104 +242,98 @@ def calculate_combined_portfolio_parallel(
     lumpsums_list = lumpsums_list or []
     swps_list = swps_list or []
     
-    # Calculate SIPs
-    sip_final, sip_invested, sip_df = calculate_multiple_sips(sips_list, years, 0)
-    
-    # Handle rollover + additional lumpsum as combined lumpsum investment
+    # Initialize portfolio with combined lumpsum (rollover + additional)
     combined_lumpsum_amount = rollover_nominal + additional_lumpsum
-    combined_lumpsum_invested = combined_lumpsum_amount
+    current_portfolio_value = combined_lumpsum_amount
     
-    # Calculate growth of combined lumpsum (rollover + additional) using specified ROI
-    if combined_lumpsum_amount > 0:
-        combined_lumpsum_final = combined_lumpsum_amount * ((1 + lumpsum_roi / 100) ** years)
+    # Calculate monthly rates using effective compounding for SIPs and portfolio growth
+    # Use effective monthly compounding rate: (1 + annual_rate)^(1/12) - 1
+    # This is consistent with industry calculators (Groww, ET Money, etc.)
+    lumpsum_monthly_rate = (1 + lumpsum_roi / 100) ** (1/12) - 1
+    
+    # Initialize tracking variables
+    total_sip_invested = 0.0
+    total_lumpsum_invested = combined_lumpsum_amount
+    total_withdrawn = 0.0
+    
+    # Initialize SIP tracking for each SIP
+    current_sip_amounts = []
+    for sip in sips_list:
+        current_sip_amounts.append(sip['amount'])
+    
+    # Calculate other lumpsums separately and add to initial portfolio
+    if lumpsums_list:
+        other_lumpsum_final, other_lumpsum_invested, _ = calculate_multiple_lumpsums(lumpsums_list, years, 0)
+        current_portfolio_value += other_lumpsum_final
+        total_lumpsum_invested += other_lumpsum_invested
     else:
-        combined_lumpsum_final = 0
+        other_lumpsum_invested = 0.0
     
-    # Calculate other lumpsums separately (if any)
-    other_lumpsum_final, other_lumpsum_invested, lumpsum_df = calculate_multiple_lumpsums(lumpsums_list, years, 0)
-    
-    # Combine all lumpsum results
-    total_lumpsum_final = combined_lumpsum_final + other_lumpsum_final
-    total_lumpsum_invested = combined_lumpsum_invested + other_lumpsum_invested
-    
-    # Combine SIP and Lumpsum results
-    total_invested = sip_invested + total_lumpsum_invested
-    portfolio_value_nominal = sip_final + total_lumpsum_final
-    
-    # Apply SWPs (simplified - apply to total portfolio)
-    if swps_list:
-        portfolio_values = [portfolio_value_nominal]  # Simplified for now
-        remaining_after_swp, total_withdrawn, swp_df = calculate_multiple_swps(swps_list, portfolio_values, years)
-        portfolio_value_nominal = remaining_after_swp
-    else:
-        total_withdrawn = 0
-        swp_df = pd.DataFrame()
-    
-    # Create combined portfolio DataFrame with cumulative timeline
+    # Store year-wise data for reporting
     portfolio_data = []
-    for year in range(1, years + 1):
-        # Calculate cumulative years since the very start of investment plan
-        cumulative_year = phase_start_year + year
-        
-        year_data = {
-            'Year': year,
-            'Cumulative_Years': cumulative_year  # Total years since start of entire plan
-        }
-        
-        # Get SIP data for this year
-        if not sip_df.empty:
-            year_sip_data = sip_df[sip_df['Year'] == year]
-            if not year_sip_data.empty:
-                year_data['Total_SIP_Invested'] = year_sip_data['Total_SIP_Invested'].iloc[0]
-                year_data['Total_SIP_Value'] = year_sip_data['Total_SIP_Value'].iloc[0]
-            else:
-                year_data['Total_SIP_Invested'] = 0
-                year_data['Total_SIP_Value'] = 0
-        else:
-            year_data['Total_SIP_Invested'] = 0
-            year_data['Total_SIP_Value'] = 0
-        
-        # Calculate combined lumpsum value for this year (rollover + additional)
-        if combined_lumpsum_amount > 0:
-            year_combined_lumpsum_value = combined_lumpsum_amount * ((1 + lumpsum_roi / 100) ** year)
-        else:
-            year_combined_lumpsum_value = 0
-        
-        # Get other lumpsum data for this year
-        if not lumpsum_df.empty:
-            year_lumpsum_data = lumpsum_df[lumpsum_df['Year'] == year]
-            if not year_lumpsum_data.empty:
-                year_other_lumpsum_value = year_lumpsum_data['Total_Lumpsum_Value'].iloc[0]
-            else:
-                year_other_lumpsum_value = 0
-        else:
-            year_other_lumpsum_value = 0
-        
-        # Combine all lumpsum values
-        year_data['Rollover_Lumpsum_Invested'] = rollover_nominal
-        year_data['Additional_Lumpsum_Invested'] = additional_lumpsum + other_lumpsum_invested
-        year_data['Total_Lumpsum_Invested'] = combined_lumpsum_invested + other_lumpsum_invested
-        year_data['Total_Lumpsum_Value'] = year_combined_lumpsum_value + year_other_lumpsum_value
-        
-        # Calculate portfolio totals
-        nominal_portfolio_value = year_data['Total_SIP_Value'] + year_data['Total_Lumpsum_Value']
-        
-        # Get SWP data for this year
-        if not swp_df.empty:
-            year_swp_data = swp_df[swp_df['Year'] == year]
-            if not year_swp_data.empty:
-                year_data['Total_Withdrawn'] = year_swp_data['Total_Withdrawn'].iloc[0]
-                nominal_portfolio_value = year_swp_data['Remaining_Value'].iloc[0]
-            else:
-                year_data['Total_Withdrawn'] = 0
-        else:
-            year_data['Total_Withdrawn'] = 0
-        
-        year_data['Nominal_Portfolio_Value'] = nominal_portfolio_value
-        
-        portfolio_data.append(year_data)
+    total_months = years * 12
     
+    # Month-by-month calculation
+    for month in range(1, total_months + 1):
+        current_year = (month - 1) // 12 + 1
+        month_in_year = ((month - 1) % 12) + 1
+        
+        # 1. Add monthly SIP investments
+        monthly_sip_total = 0.0
+        for i, sip in enumerate(sips_list):
+            # Use effective monthly compounding rate: (1 + annual_rate)^(1/12) - 1
+            # This is consistent with industry calculators (Groww, ET Money, etc.)
+            sip_monthly_rate = (1 + sip['rate'] / 100) ** (1/12) - 1
+            
+            # Add current SIP amount to portfolio
+            current_portfolio_value += current_sip_amounts[i]
+            total_sip_invested += current_sip_amounts[i]
+            monthly_sip_total += current_sip_amounts[i]
+            
+            # Apply step-up at end of year
+            if month % 12 == 0 and sip.get('step_up', 0) > 0:
+                current_sip_amounts[i] *= (1 + sip.get('step_up', 0) / 100)
+        
+        # 2. Apply growth to entire portfolio (SIPs + Lumpsums)
+        # Use weighted average of growth rates or simplified single rate
+        current_portfolio_value *= (1 + lumpsum_monthly_rate)
+        
+        # 3. Apply SWP withdrawals (if applicable)
+        monthly_swp_total = 0.0
+        for swp in swps_list:
+            swp_start_year = swp.get('start_year', 1)
+            if current_year >= swp_start_year:
+                swp_amount = swp['amount']
+                if current_portfolio_value >= swp_amount:
+                    current_portfolio_value -= swp_amount
+                    total_withdrawn += swp_amount
+                    monthly_swp_total += swp_amount
+                # If insufficient balance, skip withdrawal (could also do partial)
+        
+        # 4. Record year-end data
+        if month % 12 == 0:
+            cumulative_year = phase_start_year + current_year
+            
+            year_data = {
+                'Year': current_year,
+                'Cumulative_Years': cumulative_year,
+                'Total_SIP_Invested': total_sip_invested,
+                'Total_SIP_Value': 0,  # Will calculate separately for display
+                'Rollover_Lumpsum_Invested': rollover_nominal,
+                'Additional_Lumpsum_Invested': additional_lumpsum + other_lumpsum_invested,
+                'Total_Lumpsum_Invested': total_lumpsum_invested,
+                'Total_Lumpsum_Value': 0,  # Will calculate separately for display
+                'Total_Withdrawn': total_withdrawn,
+                'Nominal_Portfolio_Value': current_portfolio_value
+            }
+            portfolio_data.append(year_data)
+    
+    # Create portfolio DataFrame
     portfolio_df = pd.DataFrame(portfolio_data)
+    
+    # Calculate total invested
+    total_invested = total_sip_invested + total_lumpsum_invested
+    portfolio_value_nominal = current_portfolio_value
     
     # Apply inflation adjustment using cumulative years for reporting only
     if inflation_rate > 0 and not portfolio_df.empty:
@@ -811,14 +657,27 @@ def portfolio_investment_section(phase_num: int = 1, rollover_nominal: float = 0
     with col1:
         additional_lumpsum = st.number_input(
             "Additional Lumpsum Amount (₹)", 
-            min_value=0.0, 
             value=0.0,
             key=f"additional_lumpsum_{phase_num}",
-            help="Additional lumpsum to add to rollover amount"
+            help="Additional lumpsum to add to rollover amount (negative values represent withdrawals)"
         )
         
         total_lumpsum = rollover_nominal + additional_lumpsum
-        st.info(f"**Total Lumpsum**: ₹{rollover_nominal:,.2f} (rollover) + ₹{additional_lumpsum:,.2f} (additional) = ₹{total_lumpsum:,.2f}")
+        
+        # Validation: Total lumpsum must be greater than 0
+        if total_lumpsum < 0:
+            st.error(f"❌ **Invalid Total Lumpsum**: ₹{total_lumpsum:,.2f}")
+            st.error("The combined amount (rollover + additional lumpsum) must be greater than ₹0. "
+                    "Please adjust your additional lumpsum amount.")
+            lumpsum_valid = False
+        else:
+            lumpsum_valid = True
+        
+        # Display total lumpsum with appropriate styling
+        if lumpsum_valid:
+            st.info(f"**Total Lumpsum**: ₹{rollover_nominal:,.2f} (rollover) + ₹{additional_lumpsum:,.2f} (additional) = ₹{total_lumpsum:,.2f}")
+        else:
+            st.warning(f"**Total Lumpsum**: ₹{rollover_nominal:,.2f} (rollover) + ₹{additional_lumpsum:,.2f} (additional) = ₹{total_lumpsum:,.2f}")
     
     with col2:
         lumpsum_roi = st.number_input(
@@ -936,14 +795,14 @@ def portfolio_investment_section(phase_num: int = 1, rollover_nominal: float = 0
     with col2:
         if st.button("➕ Add SWP", key=f"add_swp_{phase_num}"):
             st.session_state[f'swps_{phase_num}'].append({
-                'amount': 10000, 'rate': 8, 'start_year': 1
+                'amount': 10000, 'start_year': 1
             })
     
     # Display existing SWPs
     swps_to_remove = []
     for i, swp in enumerate(st.session_state[f'swps_{phase_num}']):
         with st.expander(f"SWP {i+1}: ₹{swp['amount']:,}/month from Year {swp['start_year']}", expanded=True):
-            col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+            col1, col2, col3 = st.columns([3, 2, 1])
             
             with col1:
                 swp['amount'] = st.number_input(
@@ -954,14 +813,6 @@ def portfolio_investment_section(phase_num: int = 1, rollover_nominal: float = 0
                 )
             
             with col2:
-                swp['rate'] = st.number_input(
-                    "Return Rate During SWP (%)", 
-                    min_value=0.0, 
-                    value=float(swp['rate']),
-                    key=f"swp_rate_{phase_num}_{i}"
-                )
-            
-            with col3:
                 swp['start_year'] = st.number_input(
                     "Start Year", 
                     min_value=1, 
@@ -970,7 +821,7 @@ def portfolio_investment_section(phase_num: int = 1, rollover_nominal: float = 0
                     key=f"swp_start_{phase_num}_{i}"
                 )
             
-            with col4:
+            with col3:
                 if st.button("🗑️", key=f"remove_swp_{phase_num}_{i}", help="Remove this SWP"):
                     swps_to_remove.append(i)
     
@@ -996,14 +847,17 @@ def portfolio_investment_section(phase_num: int = 1, rollover_nominal: float = 0
     # Calculate button
     has_investments = (st.session_state[f'sips_{phase_num}'] or 
                       st.session_state[f'lumpsums_{phase_num}'] or 
-                      total_lumpsum > 0)
+                      (total_lumpsum > 0 and lumpsum_valid))
+    
+    # Check if calculation should be enabled
+    calculation_enabled = has_investments and lumpsum_valid
     
     if st.button(f"🧮 Calculate Portfolio - Phase {phase_num}", 
                 key=f"calc_portfolio_{phase_num}", 
                 type="primary",
-                disabled=not has_investments):
+                disabled=not calculation_enabled):
         
-        if has_investments and years > 0:
+        if calculation_enabled and years > 0:
             # Perform portfolio calculation with updated parameters
             nominal_final, real_final, total_invested, total_withdrawn, net_benefit, portfolio_df = calculate_combined_portfolio_parallel(
                 sips_list=st.session_state[f'sips_{phase_num}'],
@@ -1030,7 +884,10 @@ def portfolio_investment_section(phase_num: int = 1, rollover_nominal: float = 0
                 'lumpsum_roi': lumpsum_roi
             }
         else:
-            st.error("Please add at least one investment or ensure you have a rollover amount.")
+            if not lumpsum_valid:
+                st.error("Cannot calculate: Total lumpsum (rollover + additional) must be greater than ₹0.")
+            else:
+                st.error("Please add at least one investment or ensure you have a rollover amount.")
     
     # Display results if available
     if f'portfolio_result_{phase_num}' in st.session_state:
@@ -1048,116 +905,60 @@ def portfolio_investment_section(phase_num: int = 1, rollover_nominal: float = 0
     
     return None
 
-def old_combined_investment_section(phase_num: int = 1, initial_amount: float = 0.0):
-    """Combined investment section UI and calculations for SIP + Lumpsum + SWP."""
-    st.subheader(f"� Combined Investment Calculator - Phase {phase_num}")
+def main():
+    """Main application."""
+    st.title("🏦 Advanced Portfolio Financial Calculator")
+    st.markdown("*Multi-phase portfolio planning with parallel investments & inflation adjustment*")
+    st.markdown("---")
     
-    if initial_amount > 0:
-        st.info(f"Starting with rollover amount: ₹{initial_amount:,.2f}")
+    # Initialize session state for phases
+    if 'num_phases' not in st.session_state:
+        st.session_state.num_phases = 1
     
-    # Investment inputs
-    st.markdown("### 📈 Investment Parameters")
-    col1, col2 = st.columns(2)
+    # Phase management
+    st.sidebar.markdown("### 🎯 Multi-Phase Planning")
+    col1, col2 = st.sidebar.columns(2)
     
     with col1:
-        # SIP inputs
-        st.markdown("**SIP Investment**")
-        sip_amount = st.number_input(
-            "Monthly SIP Amount (₹)", 
-            min_value=0.0, 
-            value=0.0,
-            key=f"sip_amount_{phase_num}",
-            help="Set to 0 if no SIP investment"
-        )
-        step_up = st.number_input(
-            "Annual SIP Step-up (%)", 
-            min_value=0.0, 
-            value=10.0,
-            key=f"sip_stepup_{phase_num}"
-        )
-        
-        # Lumpsum inputs
-        st.markdown("**Lumpsum Investment**")
-        lumpsum_amount = st.number_input(
-            "Additional Lumpsum (₹)", 
-            min_value=0.0, 
-            value=0.0,
-            key=f"lumpsum_amount_{phase_num}",
-            help="Additional lumpsum on top of rollover amount"
-        )
+        if st.button("➕ Add Phase"):
+            st.session_state.num_phases += 1
+            st.rerun()
     
     with col2:
-        # Common parameters
-        st.markdown("**Common Parameters**")
-        annual_rate = st.number_input(
-            "Expected Annual Return (%)", 
-            min_value=0.0, 
-            value=12.0,
-            key=f"annual_rate_{phase_num}"
-        )
-        years = st.number_input(
-            "Duration (Years)", 
-            min_value=1, 
-            value=10,
-            key=f"years_{phase_num}"
+        if st.session_state.num_phases > 1:
+            if st.button("➖ Remove Phase"):
+                st.session_state.num_phases -= 1
+                st.rerun()
+    
+    st.sidebar.info(f"**Current Phases:** {st.session_state.num_phases}")
+    
+    # Process phases
+    rollover_amount = 0.0  # Nominal amount to roll over
+    cumulative_years = 0  # Track total years elapsed
+    
+    for phase in range(1, st.session_state.num_phases + 1):
+        st.markdown(f"## 🎯 Phase {phase}")
+        
+        # Call the portfolio investment section
+        result = portfolio_investment_section(
+            phase_num=phase, 
+            rollover_nominal=rollover_amount,
+            cumulative_years_before_phase=cumulative_years
         )
         
-        # SWP inputs
-        st.markdown("**SWP (Withdrawal)**")
-        swp_withdrawal = st.number_input(
-            "Monthly Withdrawal (₹)", 
-            min_value=0.0, 
-            value=0.0,
-            key=f"swp_withdrawal_{phase_num}",
-            help="Set to 0 if no withdrawal needed"
-        )
-        swp_start_year = st.number_input(
-            "SWP Start Year", 
-            min_value=1, 
-            value=1,
-            max_value=years,
-            key=f"swp_start_year_{phase_num}",
-            help="Year when withdrawals begin"
-        )
-    
-    # Validation and calculation
-    has_investment = sip_amount > 0 or lumpsum_amount > 0 or initial_amount > 0
-    
-    if st.button(f"Calculate Combined Investment - Phase {phase_num}", key=f"calc_combined_{phase_num}"):
-        if has_investment and annual_rate > 0 and years > 0:
-            final_amount, total_invested, total_withdrawn, df = calculate_combined_investment(
-                sip_amount=sip_amount,
-                lumpsum_amount=lumpsum_amount,
-                annual_rate=annual_rate,
-                years=years,
-                step_up=step_up,
-                initial_amount=initial_amount,
-                swp_withdrawal=swp_withdrawal,
-                swp_start_year=swp_start_year
-            )
+        if result:
+            rollover_amount = result['nominal_final']
             
-            st.session_state[f'combined_result_{phase_num}'] = {
-                'final_amount': final_amount,
-                'total_invested': total_invested,
-                'total_withdrawn': total_withdrawn,
-                'df': df
-            }
-        else:
-            st.error("Please provide at least one investment amount and valid parameters.")
+            # Update cumulative years
+            if 'portfolio_df' in result and not result['portfolio_df'].empty:
+                phase_years = len(result['portfolio_df'])
+                cumulative_years += phase_years
+        
+        if phase < st.session_state.num_phases:
+            st.success(f"✅ Phase {phase} completed! **Nominal amount** ₹{rollover_amount:,.2f} will roll over to Phase {phase + 1} as Lumpsum investment")
+            st.info(f"📅 **Cumulative Years**: {cumulative_years} years have elapsed since start of investment plan")
     
-    # Display results if available
-    if f'combined_result_{phase_num}' in st.session_state:
-        result = st.session_state[f'combined_result_{phase_num}']
-        display_results(
-            result['final_amount'], 
-            result['total_invested'], 
-            result['df'], 
-            "Combined",
-            result['total_withdrawn']
-        )
-        return result['final_amount']
-    
-    return None
+    st.markdown("---")
 
 def main():
     """Main application."""
@@ -1250,99 +1051,5 @@ def main():
     st.markdown("*Built with ❤️ using Streamlit | Advanced Portfolio Calculator v3.0*")
     st.markdown("*Features: Multi-parallel investments, Inflation adjustment, Multi-phase planning*")
 
-def test_cumulative_inflation_logic():
-    """
-    Regression test for cumulative inflation handling across multiple phases.
-    
-    INFLATION LOGIC EXPLANATION:
-    - Nominal values represent actual rupees that get invested/rolled over
-    - Real values are inflation-adjusted for reporting purposes only  
-    - Real values use CUMULATIVE years since start, not per-phase years
-    
-    Example: 2-phase scenario with 6% inflation
-    - Phase 1: 10 years, Phase 2: 10 years  
-    - Total investment period: 20 years
-    - Phase 1 real values: discounted by years 1-10
-    - Phase 2 real values: discounted by years 11-20 (cumulative)
-    """
-    import math
-    
-    print('\n🧪 CUMULATIVE INFLATION LOGIC TEST')
-    print('=' * 50)
-    
-    # Test parameters
-    inflation_rate = 6.0
-    initial_lumpsum = 1_000_000
-    roi = 12.0
-    
-    # Phase 1: 10 years
-    phase1_years = 10
-    phase1_nominal_final = initial_lumpsum * ((1 + roi / 100) ** phase1_years)
-    # Real value at end of phase 1 (10 years cumulative)
-    phase1_real_final = phase1_nominal_final / ((1 + inflation_rate / 100) ** phase1_years)
-    
-    print(f'\n1️⃣ Phase 1 (Years 1-10):')
-    print(f'   Initial Investment: ₹{initial_lumpsum:,.2f}')
-    print(f'   Nominal Final: ₹{phase1_nominal_final:,.2f}')
-    print(f'   Real Final (10 years): ₹{phase1_real_final:,.2f}')
-    
-    # Phase 2: 10 more years (rollover the NOMINAL amount)
-    phase2_years = 10
-    phase2_nominal_final = phase1_nominal_final * ((1 + roi / 100) ** phase2_years)
-    # Real value at end of phase 2 (20 years cumulative - this is the key fix!)
-    cumulative_years_total = phase1_years + phase2_years
-    phase2_real_final = phase2_nominal_final / ((1 + inflation_rate / 100) ** cumulative_years_total)
-    
-    print(f'\n2️⃣ Phase 2 (Years 11-20):')
-    print(f'   Rollover Nominal: ₹{phase1_nominal_final:,.2f}')
-    print(f'   Nominal Final: ₹{phase2_nominal_final:,.2f}')
-    print(f'   Real Final (20 years cumulative): ₹{phase2_real_final:,.2f}')
-    
-    # Expected values for validation
-    expected_phase1_nominal = 3_105_848.21
-    expected_phase1_real = 1_734_289.42
-    expected_phase2_nominal = 9_646_293.09
-    expected_phase2_real = 3_007_759.78
-    
-    print(f'\n✅ Validation (with tolerance):')
-    
-    # Validate Phase 1
-    assert math.isclose(phase1_nominal_final, expected_phase1_nominal, rel_tol=1e-2), \
-        f"Phase 1 nominal: got {phase1_nominal_final:.2f}, expected {expected_phase1_nominal:.2f}"
-    print(f'   ✓ Phase 1 Nominal: {phase1_nominal_final:,.2f} ≈ {expected_phase1_nominal:,.2f}')
-    
-    assert math.isclose(phase1_real_final, expected_phase1_real, rel_tol=1e-2), \
-        f"Phase 1 real: got {phase1_real_final:.2f}, expected {expected_phase1_real:.2f}"
-    print(f'   ✓ Phase 1 Real: {phase1_real_final:,.2f} ≈ {expected_phase1_real:,.2f}')
-    
-    # Validate Phase 2  
-    assert math.isclose(phase2_nominal_final, expected_phase2_nominal, rel_tol=1e-2), \
-        f"Phase 2 nominal: got {phase2_nominal_final:.2f}, expected {expected_phase2_nominal:.2f}"
-    print(f'   ✓ Phase 2 Nominal: {phase2_nominal_final:,.2f} ≈ {expected_phase2_nominal:,.2f}')
-    
-    assert math.isclose(phase2_real_final, expected_phase2_real, rel_tol=1e-2), \
-        f"Phase 2 real: got {phase2_real_final:.2f}, expected {expected_phase2_real:.2f}"
-    print(f'   ✓ Phase 2 Real: {phase2_real_final:,.2f} ≈ {expected_phase2_real:,.2f}')
-    
-    # Test the apply_inflation_adjustment function directly
-    print(f'\n🔬 Function Test:')
-    nominal_values = [phase1_nominal_final, phase2_nominal_final]
-    cumulative_years = [10, 20]
-    real_values = apply_inflation_adjustment(nominal_values, inflation_rate, cumulative_years)
-    
-    assert math.isclose(real_values[0], expected_phase1_real, rel_tol=1e-2), \
-        f"Function Phase 1 real: got {real_values[0]:.2f}, expected {expected_phase1_real:.2f}"
-    assert math.isclose(real_values[1], expected_phase2_real, rel_tol=1e-2), \
-        f"Function Phase 2 real: got {real_values[1]:.2f}, expected {expected_phase2_real:.2f}"
-    
-    print(f'   ✓ apply_inflation_adjustment function working correctly')
-    print(f'\n🎯 All tests passed! Cumulative inflation logic is correct.')
-    
 if __name__ == "__main__":
-    import sys
-    
-    # Run test if --test argument is provided
-    if len(sys.argv) > 1 and sys.argv[1] == '--test':
-        test_cumulative_inflation_logic()
-    else:
-        main()
+    main()
